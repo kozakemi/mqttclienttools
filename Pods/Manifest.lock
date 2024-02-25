@@ -1,0 +1,23 @@
+PODS:
+  - MQTTClient (0.15.3):
+    - MQTTClient/Core (= 0.15.3)
+  - MQTTClient/Core (0.15.3):
+    - MQTTClient/Manager
+    - MQTTClient/Min
+  - MQTTClient/Manager (0.15.3):
+    - MQTTClient/Min
+  - MQTTClient/Min (0.15.3)
+
+DEPENDENCIES:
+  - MQTTClient
+
+SPEC REPOS:
+  https://github.com/CocoaPods/Specs.git:
+    - MQTTClient
+
+SPEC CHECKSUMS:
+  MQTTClient: 0dfa04e789479c2e461786464969895c1fcb0875
+
+PODFILE CHECKSUM: 3a05a70e6eba2874c84413b090daa76f7dc29a54
+
+COCOAPODS: 1.15.2
