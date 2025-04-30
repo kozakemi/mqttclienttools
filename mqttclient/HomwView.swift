@@ -363,6 +363,7 @@ extension HomwViewModel: MQTTSessionDelegate {
 
 struct MessageBubble: View {
     let message: Message
+    @State private var showCopyAlert = false
     
     var body: some View {
         VStack(alignment: message.isReceived ? .leading : .trailing) {
@@ -391,14 +392,31 @@ struct MessageBubble: View {
                 if !message.isReceived {
                     Spacer()
                 }
+                
                 Text(message.content)
                     .padding(10)
                     .background(message.isReceived ? Color.gray.opacity(0.2) : Color.blue.opacity(0.2))
                     .cornerRadius(10)
+                    // 添加可选择文本支持
+                    .textSelection(.enabled)
+                    // 添加长按菜单
+                    .contextMenu {
+                        Button(action: {
+                            UIPasteboard.general.string = message.content
+                            showCopyAlert = true
+                        }) {
+                            Label("复制", systemImage: "doc.on.doc")
+                        }
+                    }
+                
                 if message.isReceived {
                     Spacer()
                 }
             }
+        }
+        // 添加复制成功的提示
+        .alert("已复制到剪贴板", isPresented: $showCopyAlert) {
+            Button("确定", role: .cancel) { }
         }
     }
 }
@@ -409,12 +427,15 @@ struct ChatView: View {
     let onClearRequest: (Topic) -> Void
     @State private var scrollToBottom = false
     @State private var scrollToTop = false
-    @State private var messageCount: Int = 0  // 用于强制刷新视图
+    @State private var messageCount: Int = 0
+    @State private var showShareSheet = false
+    @State private var shareText = ""
+    @State private var showCopiedAlert = false
     
     var body: some View {
         VStack {
             // 顶部工具栏
-            HStack(spacing: 20) {
+            HStack(spacing: 16) {
                 Button(action: {
                     scrollToTop = true
                 }) {
@@ -442,6 +463,21 @@ struct ChatView: View {
                 }
                 
                 Spacer()
+                
+                // // 添加复制所有消息按钮
+                // Button(action: {
+                //     copyAllMessages()
+                // }) {
+                //     HStack {
+                //         Image(systemName: "doc.on.doc")
+                //         Text("复制全部")
+                //     }
+                //     .padding(.horizontal, 8)
+                //     .padding(.vertical, 4)
+                //     .background(Color.blue.opacity(0.2))
+                //     .cornerRadius(8)
+                //     .foregroundColor(.blue)
+                // }
                 
                 Button(action: {
                     print("清空按钮被点击")
@@ -543,6 +579,26 @@ struct ChatView: View {
             messageCount = topic.messages.count
             print("ChatView appeared，消息数量: \(messageCount)")
         }
+        // 添加复制成功的提示
+        .alert("已复制全部消息到剪贴板", isPresented: $showCopiedAlert) {
+            Button("确定", role: .cancel) { }
+        }
+    }
+    
+    // 复制所有消息的方法
+    private func copyAllMessages() {
+        if topic.messages.isEmpty {
+            return
+        }
+        
+        var allMessages = ""
+        for message in topic.messages {
+            let prefix = message.isReceived ? "收到: " : "发送: "
+            allMessages += "\(prefix)\(message.content)\n"
+        }
+        
+        UIPasteboard.general.string = allMessages
+        showCopiedAlert = true
     }
 }
 
