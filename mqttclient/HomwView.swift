@@ -16,6 +16,15 @@ struct Message: Identifiable, Codable {
         self.qosLevel = qosLevel
         self.format = format
     }
+    
+    // 添加一个便捷的初始化方法，接受MessageFormat枚举
+    init(content: String, isReceived: Bool, timestamp: Date, qosLevel: Int = 1, format: MessageFormat) {
+        self.content = content
+        self.isReceived = isReceived
+        self.timestamp = timestamp
+        self.qosLevel = qosLevel
+        self.format = format.rawValue
+    }
 }
 
 class Topic: Identifiable, Codable {
@@ -246,7 +255,7 @@ class HomwViewModel: NSObject, ObservableObject {
         if session?.status == .connected {
             for topic in topics {
                 let qosLevel = selectedQoS.mqttQoS
-                session?.subscribeToTopic(topic.name, atLevel: qosLevel, subscribeHandler: { error, gQoss in
+                session?.subscribe(toTopic: topic.name, at: qosLevel, subscribeHandler: { error, gQoss in
                     if let error = error {
                         print("订阅Topic失败: \(topic.name), 错误: \(error.localizedDescription)")
                         self.showAlert("订阅失败: \(error.localizedDescription)")
@@ -357,7 +366,7 @@ class HomwViewModel: NSObject, ObservableObject {
                                 isReceived: false, 
                                 timestamp: Date(), 
                                 qosLevel: selectedQoS.rawValue, 
-                                format: selectedFormat.rawValue)
+                                format: selectedFormat)
         topic.messages.append(newMessage)
         saveTopics()
         
@@ -407,7 +416,7 @@ extension HomwViewModel: MQTTSessionDelegate {
                 // 连接成功后订阅所有Topic
                 for topic in self.topics {
                     let qosLevel = self.selectedQoS.mqttQoS
-                    session.subscribeToTopic(topic.name, atLevel: qosLevel, subscribeHandler: { error, gQoss in
+                    session.subscribe(toTopic: topic.name, at: qosLevel, subscribeHandler: { error, gQoss in
                         if let error = error {
                             print("订阅Topic失败: \(topic.name), 错误: \(error.localizedDescription)")
                             self.showAlert("订阅失败: \(error.localizedDescription)")
@@ -437,52 +446,63 @@ extension HomwViewModel: MQTTSessionDelegate {
     }
     
     func newMessage(_ session: MQTTSession!, data: Data!, onTopic topic: String!, qos: MQTTQosLevel, retained: Bool, mid: UInt32) {
-        guard let content = String(data: data, encoding: .utf8) else { return }
-        
-        // 检查是否是自己发送的消息
-        if let lastMessage = topics.first(where: { $0.name == topic })?.messages.last,
-           lastMessage.content == content && !lastMessage.isReceived {
-            return // 如果是自己刚发送的消息，则不重复显示
-        }
-        
-        // 输出接收到的原始QoS值，用于调试
-        print("接收到消息，原始QoS原始值: \(qos.rawValue)")
-        
         // 将MQTTQosLevel转换为Int
         let qosInt = Int(qos.rawValue)
         print("接收消息使用QoS级别: \(qosInt)")
         
-        // 尝试检测消息格式
-        var detectedFormat = MessageFormat.text.rawValue
+        // 尝试以不同格式解析收到的数据
+        var content = ""
+        var detectedFormat = MessageFormat.text
+        var isValidData = true
         
-        // 检测是否为JSON格式
-        if content.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") &&
-           content.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("}") {
-            if let jsonData = content.data(using: .utf8),
-               let _ = try? JSONSerialization.jsonObject(with: jsonData, options: []) {
-                detectedFormat = MessageFormat.json.rawValue
+        // 首先尝试作为UTF-8文本解析
+        if let textContent = String(data: data, encoding: .utf8) {
+            content = textContent
+            
+            // 检查是否是自己发送的消息
+            if let lastMessage = topics.first(where: { $0.name == topic })?.messages.last,
+               lastMessage.content == content && !lastMessage.isReceived {
+                return // 如果是自己刚发送的消息，则不重复显示
             }
-        }
-        // 检测是否为十六进制格式 (简单检测)
-        else if content.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "0x", with: "")
-            .allSatisfy({ $0.isHexDigit }) {
-            detectedFormat = MessageFormat.hex.rawValue
+            
+            // 检测是否为JSON格式
+            if content.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") &&
+               content.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("}") {
+                if let _ = try? JSONSerialization.jsonObject(with: data, options: []) {
+                    detectedFormat = .json
+                }
+            }
+            // 检测是否为十六进制格式
+            else if content.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "0x", with: "")
+                .allSatisfy({ $0.isHexDigit }) {
+                detectedFormat = .hex
+            }
+        } else {
+            // 如果不是文本，则尝试将其作为二进制数据，并转换为十六进制字符串
+            content = data.map { String(format: "%02X", $0) }.joined(separator: " ")
+            detectedFormat = .hex
+            print("接收到二进制数据，转换为十六进制: \(content)")
         }
         
         DispatchQueue.main.async {
             if let index = self.topics.firstIndex(where: { $0.name == topic }) {
-                // 使用检测到的格式或默认文本格式
-                let message = Message(content: content, 
-                                   isReceived: true, 
-                                   timestamp: Date(), 
-                                   qosLevel: qosInt,
-                                   format: detectedFormat)
-                
-                self.topics[index].messages.append(message)
-                if self.selectedTopic?.name == topic {
-                    self.selectedTopic = self.topics[index]
+                if isValidData {
+                    // 使用检测到的格式或默认文本格式
+                    let message = Message(content: content, 
+                                       isReceived: true, 
+                                       timestamp: Date(), 
+                                       qosLevel: qosInt,
+                                       format: detectedFormat)
+                    
+                    self.topics[index].messages.append(message)
+                    if self.selectedTopic?.name == topic {
+                        self.selectedTopic = self.topics[index]
+                    }
+                    self.saveTopics()
+                    print("已保存接收到的消息: \(content) (格式: \(detectedFormat.rawValue))")
+                } else {
+                    print("接收到无效数据，无法解析")
                 }
-                self.saveTopics()
             }
         }
     }

@@ -58,7 +58,7 @@ struct TopicView: View {
                             // 如果已连接MQTT，立即订阅新主题
                             if viewModel.isConnected, let session = viewModel.getSession() {
                                 let qosLevel = viewModel.selectedQoS.mqttQoS
-                                session.subscribeToTopic(newTopic.name, atLevel: qosLevel, subscribeHandler: { error, gQoss in
+                                session.subscribe(toTopic: newTopic.name, at: qosLevel, subscribeHandler: { error, gQoss in
                                     if let error = error {
                                         print("订阅新Topic失败: \(newTopic.name), 错误: \(error.localizedDescription)")
                                         viewModel.showAlert("订阅失败: \(error.localizedDescription)")
