@@ -7,12 +7,14 @@ struct Message: Identifiable, Codable {
     let isReceived: Bool
     let timestamp: Date
     let qosLevel: Int // 0, 1, 或 2
+    let format: String
     
-    init(content: String, isReceived: Bool, timestamp: Date, qosLevel: Int = 1) {
+    init(content: String, isReceived: Bool, timestamp: Date, qosLevel: Int = 1, format: String) {
         self.content = content
         self.isReceived = isReceived
         self.timestamp = timestamp
         self.qosLevel = qosLevel
+        self.format = format
     }
 }
 
@@ -44,6 +46,15 @@ class Topic: Identifiable, Codable {
         try container.encode(name, forKey: .name)
         try container.encode(messages, forKey: .messages)
     }
+}
+
+// 消息格式枚举
+enum MessageFormat: String, CaseIterable, Identifiable {
+    case text = "文本"
+    case hex = "十六进制"
+    case json = "JSON"
+    
+    var id: Self { self }
 }
 
 class HomwViewModel: NSObject, ObservableObject {
@@ -95,6 +106,8 @@ class HomwViewModel: NSObject, ObservableObject {
     
     @Published var isConnected = false
     @Published var selectedQoS: QoSLevel = .atLeastOnce
+    @Published var selectedFormat: MessageFormat = .text
+    private var alertMessage: String = ""
     
     // 警告系统
     enum AlertType: Identifiable {
@@ -134,6 +147,12 @@ class HomwViewModel: NSObject, ObservableObject {
         if let savedQoS = defaults.object(forKey: "selectedQoS") as? Int,
            let qos = QoSLevel(rawValue: savedQoS) {
             selectedQoS = qos
+        }
+        
+        // 加载上次使用的消息格式
+        if let savedFormat = defaults.string(forKey: "selectedFormat"),
+           let format = MessageFormat(rawValue: savedFormat) {
+            selectedFormat = format
         }
     }
     
@@ -222,6 +241,22 @@ class HomwViewModel: NSObject, ObservableObject {
         print("正在尝试连接MQTT服务器: \(ipAddress):\(port)")
         session?.connect()
         session?.delegate = self
+        
+        // 手动尝试订阅所有Topic（作为备份机制）
+        if session?.status == .connected {
+            for topic in topics {
+                let qosLevel = selectedQoS.mqttQoS
+                session?.subscribeToTopic(topic.name, atLevel: qosLevel, subscribeHandler: { error, gQoss in
+                    if let error = error {
+                        print("订阅Topic失败: \(topic.name), 错误: \(error.localizedDescription)")
+                        self.showAlert("订阅失败: \(error.localizedDescription)")
+                    } else {
+                        print("成功订阅Topic: \(topic.name), QoS: \(gQoss?.first?.intValue ?? -1)")
+                    }
+                })
+                print("已请求订阅Topic: \(topic.name)，使用QoS级别: \(self.selectedQoS.rawValue)")
+            }
+        }
     }
     
     func disconnectMQTT() {
@@ -231,37 +266,106 @@ class HomwViewModel: NSObject, ObservableObject {
         isConnected = false
     }
     
-    func sendMessage(_ content: String, to topic: String) {
-        guard !content.isEmpty else {
-            showAlert("消息内容不能为空")
+    // 准备要发送的数据
+    func prepareMessageData(content: String, format: MessageFormat) -> Data? {
+        switch format {
+        case .text:
+            return content.data(using: .utf8)
+            
+        case .hex:
+            // 转换十六进制字符串为数据
+            // 先移除所有空格
+            let hexString = content.replacingOccurrences(of: " ", with: "")
+                .replacingOccurrences(of: "0x", with: "")
+                .replacingOccurrences(of: ",", with: "")
+            
+            var data = Data()
+            
+            // 解析十六进制字符串
+            var formattedHex = ""
+            let characters = Array(hexString)
+            
+            // 每两个字符一组，转为一个字节
+            var i = 0
+            while i < characters.count {
+                var byteString = ""
+                
+                if i + 1 < characters.count {
+                    byteString = String(characters[i...i+1])
+                    i += 2
+                } else {
+                    byteString = String(characters[i]) + "0"
+                    i += 1
+                }
+                
+                if let byte = UInt8(byteString, radix: 16) {
+                    data.append(byte)
+                    formattedHex += byteString + " "
+                } else {
+                    alertMessage = "无效的十六进制字符串"
+                    return nil
+                }
+            }
+            
+            print("解析十六进制: \(formattedHex.trimmingCharacters(in: .whitespaces))")
+            return data
+            
+        case .json:
+            // 验证是否是有效的JSON字符串
+            do {
+                // 尝试解析为JSON
+                if let jsonData = content.data(using: .utf8),
+                   let _ = try JSONSerialization.jsonObject(with: jsonData, options: []) as? [String: Any] {
+                    return jsonData
+                } else {
+                    alertMessage = "无效的JSON格式"
+                    return nil
+                }
+            } catch {
+                alertMessage = "JSON解析错误: \(error.localizedDescription)"
+                return nil
+            }
+        }
+    }
+    
+    func sendMessage(_ content: String, to topic: Topic) {
+        // 准备消息数据
+        guard let data = prepareMessageData(content: content, format: selectedFormat) else {
+            showAlert("无法准备消息数据")
             return
         }
         
+        // 检查连接状态
         guard isConnected else {
             showAlert("MQTT未连接，请先连接MQTT服务器")
             return
         }
         
-        guard let session = session else { return }
-        session.publishData(content.data(using: .utf8), 
-                           onTopic: topic, 
+        guard let session = session else {
+            showAlert("MQTT会话未创建")
+            return
+        }
+        
+        // 发布MQTT消息
+        session.publishData(data, 
+                           onTopic: topic.name, 
                            retain: false, 
                            qos: selectedQoS.mqttQoS)
         
-        if let index = topics.firstIndex(where: { $0.name == topic }) {
-            let message = Message(content: content, 
-                                 isReceived: false, 
-                                 timestamp: Date(), 
-                                 qosLevel: selectedQoS.rawValue)
-            topics[index].messages.append(message)
-            if selectedTopic?.name == topic {
-                selectedTopic = topics[index]
-            }
-            saveTopics()
-        }
+        // 添加到消息列表
+        let newMessage = Message(content: content, 
+                                isReceived: false, 
+                                timestamp: Date(), 
+                                qosLevel: selectedQoS.rawValue, 
+                                format: selectedFormat.rawValue)
+        topic.messages.append(newMessage)
+        saveTopics()
         
-        // 保存选择的QoS级别供下次使用
+        // 保存QoS级别和格式偏好
         defaults.set(selectedQoS.rawValue, forKey: "selectedQoS")
+        defaults.set(selectedFormat.rawValue, forKey: "selectedFormat")
+        
+        print("消息已发送到Topic: \(topic.name), 格式: \(selectedFormat.rawValue)")
     }
     
     // 添加删除Topic的方法
@@ -284,6 +388,11 @@ class HomwViewModel: NSObject, ObservableObject {
     func showAlert(_ message: String) {
         alertType = .connection(message: message)
     }
+    
+    // 提供获取当前会话的方法，供外部使用
+    func getSession() -> MQTTSession? {
+        return session
+    }
 }
 
 extension HomwViewModel: MQTTSessionDelegate {
@@ -298,8 +407,15 @@ extension HomwViewModel: MQTTSessionDelegate {
                 // 连接成功后订阅所有Topic
                 for topic in self.topics {
                     let qosLevel = self.selectedQoS.mqttQoS
-                    session.subscribe(toTopic: topic.name, at: qosLevel)
-                    print("已订阅Topic: \(topic.name)，使用QoS级别: \(self.selectedQoS.rawValue)")
+                    session.subscribeToTopic(topic.name, atLevel: qosLevel, subscribeHandler: { error, gQoss in
+                        if let error = error {
+                            print("订阅Topic失败: \(topic.name), 错误: \(error.localizedDescription)")
+                            self.showAlert("订阅失败: \(error.localizedDescription)")
+                        } else {
+                            print("成功订阅Topic: \(topic.name), QoS: \(gQoss?.first?.intValue ?? -1)")
+                        }
+                    })
+                    print("已请求订阅Topic: \(topic.name)，使用QoS级别: \(self.selectedQoS.rawValue)")
                 }
             case .connectionClosed:
                 self.isConnected = false
@@ -333,23 +449,34 @@ extension HomwViewModel: MQTTSessionDelegate {
         print("接收到消息，原始QoS原始值: \(qos.rawValue)")
         
         // 将MQTTQosLevel转换为Int
-        // MQTTClient库中的定义是：
-        // MQTTQosLevelAtMostOnce = 0
-        // MQTTQosLevelAtLeastOnce = 1
-        // MQTTQosLevelExactlyOnce = 2
-        let qosInt: Int
-        
-        // 使用rawValue直接获取QoS级别
-        qosInt = Int(qos.rawValue)
+        let qosInt = Int(qos.rawValue)
         print("接收消息使用QoS级别: \(qosInt)")
+        
+        // 尝试检测消息格式
+        var detectedFormat = MessageFormat.text.rawValue
+        
+        // 检测是否为JSON格式
+        if content.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") &&
+           content.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("}") {
+            if let jsonData = content.data(using: .utf8),
+               let _ = try? JSONSerialization.jsonObject(with: jsonData, options: []) {
+                detectedFormat = MessageFormat.json.rawValue
+            }
+        }
+        // 检测是否为十六进制格式 (简单检测)
+        else if content.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "0x", with: "")
+            .allSatisfy({ $0.isHexDigit }) {
+            detectedFormat = MessageFormat.hex.rawValue
+        }
         
         DispatchQueue.main.async {
             if let index = self.topics.firstIndex(where: { $0.name == topic }) {
-                // 使用转换后的QoS级别
+                // 使用检测到的格式或默认文本格式
                 let message = Message(content: content, 
-                                     isReceived: true, 
-                                     timestamp: Date(), 
-                                     qosLevel: qosInt)
+                                   isReceived: true, 
+                                   timestamp: Date(), 
+                                   qosLevel: qosInt,
+                                   format: detectedFormat)
                 
                 self.topics[index].messages.append(message)
                 if self.selectedTopic?.name == topic {
@@ -367,7 +494,7 @@ struct MessageBubble: View {
     
     var body: some View {
         VStack(alignment: message.isReceived ? .leading : .trailing) {
-            // 添加QoS级别标签
+            // 顶部信息栏：QoS级别和格式
             HStack {
                 if !message.isReceived {
                     Spacer()
@@ -375,6 +502,15 @@ struct MessageBubble: View {
                 
                 let qosString = String(format: "QoS %d", message.qosLevel)
                 Text(qosString)
+                    .font(.system(size: 10))
+                    .foregroundColor(.gray)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(4)
+                
+                // 显示消息格式
+                Text(message.format)
                     .font(.system(size: 10))
                     .foregroundColor(.gray)
                     .padding(.horizontal, 5)
@@ -536,20 +672,37 @@ struct ChatView: View {
                 .id(messageCount)
             }
             
-            // QoS选择器
-            HStack {
-                Text("发送QoS:")
-                    .font(.system(size: 14))
-                
-                Picker("QoS级别", selection: $viewModel.selectedQoS) {
-                    ForEach(HomwViewModel.QoSLevel.allCases) { qos in
-                        Text(qos.description).tag(qos)
+            // 底部控制区域
+            VStack {
+                // 格式选择器
+                HStack {
+                    Text("发送格式:")
+                        .font(.system(size: 14))
+                    
+                    Picker("消息格式", selection: $viewModel.selectedFormat) {
+                        ForEach(MessageFormat.allCases) { format in
+                            Text(format.rawValue).tag(format)
+                        }
                     }
+                    .pickerStyle(SegmentedPickerStyle())
                 }
-                .pickerStyle(SegmentedPickerStyle())
-                .frame(width: 150)
+                .padding(.horizontal)
+                
+                // QoS选择器
+                HStack {
+                    Text("发送QoS:")
+                        .font(.system(size: 14))
+                    
+                    Picker("QoS级别", selection: $viewModel.selectedQoS) {
+                        ForEach(HomwViewModel.QoSLevel.allCases) { qos in
+                            Text(qos.description).tag(qos)
+                        }
+                    }
+                    .pickerStyle(SegmentedPickerStyle())
+                    .frame(width: 150)
+                }
+                .padding(.horizontal)
             }
-            .padding(.horizontal)
             
             // 输入框
             HStack {
@@ -559,7 +712,7 @@ struct ChatView: View {
                 
                 Button(action: {
                     if !viewModel.messageText.isEmpty {
-                        viewModel.sendMessage(viewModel.messageText, to: topic.name)
+                        viewModel.sendMessage(viewModel.messageText, to: topic)
                         if viewModel.isConnected { // 只有在连接状态下才清空输入框
                             viewModel.messageText = ""
                             // 发送消息后设置滚动标志
