@@ -11,6 +11,7 @@
 		444DD93E2B8C943F003354EC /* HomwView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444DD93D2B8C943F003354EC /* HomwView.swift */; };
 		444DD9402B8C9474003354EC /* ConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444DD93F2B8C9474003354EC /* ConfigView.swift */; };
 		444DD9442B8C94C7003354EC /* AboutMeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444DD9432B8C94C7003354EC /* AboutMeView.swift */; };
+		44999CA72DC28C1B00EC64E5 /* TopicView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44999CA62DC28C1B00EC64E5 /* TopicView.swift */; };
 		44F3347A2B8AF09F00729E87 /* mqttclientApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44F334792B8AF09F00729E87 /* mqttclientApp.swift */; };
 		44F3347C2B8AF09F00729E87 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44F3347B2B8AF09F00729E87 /* ContentView.swift */; };
 		44F334802B8AF0A200729E87 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 44F3347F2B8AF0A200729E87 /* Assets.xcassets */; };
@@ -44,6 +45,7 @@
 		444DD93D2B8C943F003354EC /* HomwView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomwView.swift; sourceTree = "<group>"; };
 		444DD93F2B8C9474003354EC /* ConfigView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigView.swift; sourceTree = "<group>"; };
 		444DD9432B8C94C7003354EC /* AboutMeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutMeView.swift; sourceTree = "<group>"; };
+		44999CA62DC28C1B00EC64E5 /* TopicView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopicView.swift; sourceTree = "<group>"; };
 		44F334762B8AF09F00729E87 /* mqttclient.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = mqttclient.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		44F334792B8AF09F00729E87 /* mqttclientApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = mqttclientApp.swift; sourceTree = "<group>"; };
 		44F3347B2B8AF09F00729E87 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -113,6 +115,7 @@
 			isa = PBXGroup;
 			children = (
 				44F334792B8AF09F00729E87 /* mqttclientApp.swift */,
+				44999CA62DC28C1B00EC64E5 /* TopicView.swift */,
 				44F3347B2B8AF09F00729E87 /* ContentView.swift */,
 				444DD9432B8C94C7003354EC /* AboutMeView.swift */,
 				444DD93F2B8C9474003354EC /* ConfigView.swift */,
@@ -371,6 +374,7 @@
 			files = (
 				444DD9402B8C9474003354EC /* ConfigView.swift in Sources */,
 				44F3347C2B8AF09F00729E87 /* ContentView.swift in Sources */,
+				44999CA72DC28C1B00EC64E5 /* TopicView.swift in Sources */,
 				44F3347A2B8AF09F00729E87 /* mqttclientApp.swift in Sources */,
 				444DD9442B8C94C7003354EC /* AboutMeView.swift in Sources */,
 				444DD93E2B8C943F003354EC /* HomwView.swift in Sources */,

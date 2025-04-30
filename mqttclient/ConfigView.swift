@@ -17,6 +17,7 @@ struct ConfigView: View {
     @State private var showAlert = false
     @State private var alertMessage = ""
     @State private var showPassword = false
+    @State private var showAboutMe = false
     
     // 添加环境变量来访问UIApplication
     @Environment(\.scenePhase) private var scenePhase
@@ -103,27 +104,42 @@ struct ConfigView: View {
                         .cornerRadius(10)
                     }
                     
-                    Button(action: {
-                        if validateInputs() {
-                            // 保存到 UserDefaults
-                            self.defaults.set(self.ipAddress, forKey: "ipAddress")
-                            self.defaults.set(Int(self.port) ?? 0, forKey: "port")
-                            self.defaults.set(self.username, forKey: "username")
-                            self.defaults.set(self.password, forKey: "password")
-                            self.defaults.set(self.clientId, forKey: "clientId")  // 保存客户端ID
-                            
-                            alertMessage = "配置保存成功"
-                            showAlert = true
-                        } else {
-                            showAlert = true
+                    VStack(spacing: 20) {
+                        Button(action: {
+                            if validateInputs() {
+                                // 保存到 UserDefaults
+                                self.defaults.set(self.ipAddress, forKey: "ipAddress")
+                                self.defaults.set(Int(self.port) ?? 0, forKey: "port")
+                                self.defaults.set(self.username, forKey: "username")
+                                self.defaults.set(self.password, forKey: "password")
+                                self.defaults.set(self.clientId, forKey: "clientId")  // 保存客户端ID
+                                
+                                alertMessage = "配置保存成功"
+                                showAlert = true
+                            } else {
+                                showAlert = true
+                            }
+                        }) {
+                            Text("Save")
+                                .padding()
+                                .frame(maxWidth: .infinity)
+                                .foregroundColor(.white)
+                                .background(Color.blue)
+                                .cornerRadius(10)
                         }
-                    }) {
-                        Text("Save")
+                        
+                        Button(action: {
+                            showAboutMe = true
+                        }) {
+                            HStack {
+                                Image(systemName: "person.circle")
+                                Text("关于我")
+                            }
                             .padding()
                             .frame(maxWidth: .infinity)
-                            .foregroundColor(.white)
-                            .background(Color.blue)
+                            .background(Color.blue.opacity(0.1))
                             .cornerRadius(10)
+                        }
                     }
                 }
                 .padding()
@@ -146,6 +162,9 @@ struct ConfigView: View {
             .navigationBarTitle("MQTT配置", displayMode: .inline)
             .alert(isPresented: $showAlert) {
                 Alert(title: Text(alertMessage))
+            }
+            .sheet(isPresented: $showAboutMe) {
+                AboutMeView()
             }
             // 添加点击手势来收起键盘
             .contentShape(Rectangle())
