@@ -65,9 +65,30 @@ class HomwViewModel: NSObject, ObservableObject {
         
         var mqttQoS: MQTTQosLevel {
             switch self {
-            case .atMostOnce: return .atMostOnce
-            case .atLeastOnce: return .atLeastOnce
-            case .exactlyOnce: return .exactlyOnce
+            case .atMostOnce:
+                print("发送使用QoS 0，值为\(MQTTQosLevel.atMostOnce.rawValue)")
+                return .atMostOnce
+            case .atLeastOnce:
+                print("发送使用QoS 1，值为\(MQTTQosLevel.atLeastOnce.rawValue)")
+                return .atLeastOnce
+            case .exactlyOnce:
+                print("发送使用QoS 2，值为\(MQTTQosLevel.exactlyOnce.rawValue)")
+                return .exactlyOnce
+            }
+        }
+        
+        // 从MQTTQosLevel创建QoSLevel的静态方法
+        static func from(mqttQoS: MQTTQosLevel) -> QoSLevel {
+            switch mqttQoS {
+            case .atMostOnce:
+                return .atMostOnce
+            case .atLeastOnce:
+                return .atLeastOnce
+            case .exactlyOnce:
+                return .exactlyOnce
+            @unknown default:
+                print("未知QoS级别，默认使用QoS 1")
+                return .atLeastOnce
             }
         }
     }
@@ -276,8 +297,9 @@ extension HomwViewModel: MQTTSessionDelegate {
                 print("MQTT连接成功")
                 // 连接成功后订阅所有Topic
                 for topic in self.topics {
-                    session.subscribe(toTopic: topic.name, at: self.selectedQoS.mqttQoS)
-                    print("已订阅Topic: \(topic.name)，QoS级别: \(self.selectedQoS.description)")
+                    let qosLevel = self.selectedQoS.mqttQoS
+                    session.subscribe(toTopic: topic.name, at: qosLevel)
+                    print("已订阅Topic: \(topic.name)，使用QoS级别: \(self.selectedQoS.rawValue)")
                 }
             case .connectionClosed:
                 self.isConnected = false
@@ -307,25 +329,28 @@ extension HomwViewModel: MQTTSessionDelegate {
             return // 如果是自己刚发送的消息，则不重复显示
         }
         
+        // 输出接收到的原始QoS值，用于调试
+        print("接收到消息，原始QoS原始值: \(qos.rawValue)")
+        
         // 将MQTTQosLevel转换为Int
+        // MQTTClient库中的定义是：
+        // MQTTQosLevelAtMostOnce = 0
+        // MQTTQosLevelAtLeastOnce = 1
+        // MQTTQosLevelExactlyOnce = 2
         let qosInt: Int
-        switch qos {
-        case .atMostOnce:
-            qosInt = 0
-        case .atLeastOnce:
-            qosInt = 1
-        case .exactlyOnce:
-            qosInt = 2
-        @unknown default:
-            qosInt = 1 // 默认QoS 1
-        }
+        
+        // 使用rawValue直接获取QoS级别
+        qosInt = Int(qos.rawValue)
+        print("接收消息使用QoS级别: \(qosInt)")
         
         DispatchQueue.main.async {
             if let index = self.topics.firstIndex(where: { $0.name == topic }) {
+                // 使用转换后的QoS级别
                 let message = Message(content: content, 
                                      isReceived: true, 
                                      timestamp: Date(), 
                                      qosLevel: qosInt)
+                
                 self.topics[index].messages.append(message)
                 if self.selectedTopic?.name == topic {
                     self.selectedTopic = self.topics[index]
@@ -347,7 +372,8 @@ struct MessageBubble: View {
                     Spacer()
                 }
                 
-                Text("QoS \(message.qosLevel)")
+                let qosString = String(format: "QoS %d", message.qosLevel)
+                Text(qosString)
                     .font(.system(size: 10))
                     .foregroundColor(.gray)
                     .padding(.horizontal, 5)
