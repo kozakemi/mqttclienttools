@@ -6,6 +6,14 @@ struct Message: Identifiable, Codable {
     let content: String
     let isReceived: Bool
     let timestamp: Date
+    let qosLevel: Int // 0, 1, 或 2
+    
+    init(content: String, isReceived: Bool, timestamp: Date, qosLevel: Int = 1) {
+        self.content = content
+        self.isReceived = isReceived
+        self.timestamp = timestamp
+        self.qosLevel = qosLevel
+    }
 }
 
 class Topic: Identifiable, Codable {
@@ -39,7 +47,33 @@ class Topic: Identifiable, Codable {
 }
 
 class HomwViewModel: NSObject, ObservableObject {
+    // QoS级别枚举
+    enum QoSLevel: Int, CaseIterable, Identifiable {
+        case atMostOnce = 0
+        case atLeastOnce = 1
+        case exactlyOnce = 2
+        
+        var id: Int { self.rawValue }
+        
+        var description: String {
+            switch self {
+            case .atMostOnce: return "QoS 0"
+            case .atLeastOnce: return "QoS 1"
+            case .exactlyOnce: return "QoS 2"
+            }
+        }
+        
+        var mqttQoS: MQTTQosLevel {
+            switch self {
+            case .atMostOnce: return .atMostOnce
+            case .atLeastOnce: return .atLeastOnce
+            case .exactlyOnce: return .exactlyOnce
+            }
+        }
+    }
+    
     @Published var isConnected = false
+    @Published var selectedQoS: QoSLevel = .atLeastOnce
     
     // 警告系统
     enum AlertType: Identifiable {
@@ -74,6 +108,12 @@ class HomwViewModel: NSObject, ObservableObject {
     override init() {
         super.init()
         loadTopics()
+        
+        // 加载上次使用的QoS级别
+        if let savedQoS = defaults.object(forKey: "selectedQoS") as? Int,
+           let qos = QoSLevel(rawValue: savedQoS) {
+            selectedQoS = qos
+        }
     }
     
     private func loadTopics() {
@@ -182,16 +222,25 @@ class HomwViewModel: NSObject, ObservableObject {
         }
         
         guard let session = session else { return }
-        session.publishData(content.data(using: .utf8), onTopic: topic, retain: false, qos: .atLeastOnce)
+        session.publishData(content.data(using: .utf8), 
+                           onTopic: topic, 
+                           retain: false, 
+                           qos: selectedQoS.mqttQoS)
         
         if let index = topics.firstIndex(where: { $0.name == topic }) {
-            let message = Message(content: content, isReceived: false, timestamp: Date())
+            let message = Message(content: content, 
+                                 isReceived: false, 
+                                 timestamp: Date(), 
+                                 qosLevel: selectedQoS.rawValue)
             topics[index].messages.append(message)
             if selectedTopic?.name == topic {
                 selectedTopic = topics[index]
             }
             saveTopics()
         }
+        
+        // 保存选择的QoS级别供下次使用
+        defaults.set(selectedQoS.rawValue, forKey: "selectedQoS")
     }
     
     // 添加删除Topic的方法
@@ -227,8 +276,8 @@ extension HomwViewModel: MQTTSessionDelegate {
                 print("MQTT连接成功")
                 // 连接成功后订阅所有Topic
                 for topic in self.topics {
-                    session.subscribe(toTopic: topic.name, at: .atLeastOnce)
-                    print("已订阅Topic: \(topic.name)")
+                    session.subscribe(toTopic: topic.name, at: self.selectedQoS.mqttQoS)
+                    print("已订阅Topic: \(topic.name)，QoS级别: \(self.selectedQoS.description)")
                 }
             case .connectionClosed:
                 self.isConnected = false
@@ -258,14 +307,71 @@ extension HomwViewModel: MQTTSessionDelegate {
             return // 如果是自己刚发送的消息，则不重复显示
         }
         
+        // 将MQTTQosLevel转换为Int
+        let qosInt: Int
+        switch qos {
+        case .atMostOnce:
+            qosInt = 0
+        case .atLeastOnce:
+            qosInt = 1
+        case .exactlyOnce:
+            qosInt = 2
+        @unknown default:
+            qosInt = 1 // 默认QoS 1
+        }
+        
         DispatchQueue.main.async {
             if let index = self.topics.firstIndex(where: { $0.name == topic }) {
-                let message = Message(content: content, isReceived: true, timestamp: Date())
+                let message = Message(content: content, 
+                                     isReceived: true, 
+                                     timestamp: Date(), 
+                                     qosLevel: qosInt)
                 self.topics[index].messages.append(message)
                 if self.selectedTopic?.name == topic {
                     self.selectedTopic = self.topics[index]
                 }
                 self.saveTopics()
+            }
+        }
+    }
+}
+
+struct MessageBubble: View {
+    let message: Message
+    
+    var body: some View {
+        VStack(alignment: message.isReceived ? .leading : .trailing) {
+            // 添加QoS级别标签
+            HStack {
+                if !message.isReceived {
+                    Spacer()
+                }
+                
+                Text("QoS \(message.qosLevel)")
+                    .font(.system(size: 10))
+                    .foregroundColor(.gray)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(4)
+                
+                if message.isReceived {
+                    Spacer()
+                }
+            }
+            
+            // 消息内容
+            HStack {
+                if !message.isReceived {
+                    Spacer()
+                }
+                Text(message.content)
+                    .padding(10)
+                    .background(message.isReceived ? Color.gray.opacity(0.2) : Color.blue.opacity(0.2))
+                    .cornerRadius(10)
+                if message.isReceived {
+                    Spacer()
+                }
             }
         }
     }
@@ -311,7 +417,6 @@ struct ChatView: View {
                 
                 Spacer()
                 
-                // 修改清空按钮的实现
                 Button(action: {
                     print("清空按钮被点击")
                     onClearRequest(topic)  // 使用回调
@@ -369,6 +474,21 @@ struct ChatView: View {
                 .id(messageCount)
             }
             
+            // QoS选择器
+            HStack {
+                Text("发送QoS:")
+                    .font(.system(size: 14))
+                
+                Picker("QoS级别", selection: $viewModel.selectedQoS) {
+                    ForEach(HomwViewModel.QoSLevel.allCases) { qos in
+                        Text(qos.description).tag(qos)
+                    }
+                }
+                .pickerStyle(SegmentedPickerStyle())
+                .frame(width: 150)
+            }
+            .padding(.horizontal)
+            
             // 输入框
             HStack {
                 TextField("输入消息", text: $viewModel.messageText)
@@ -396,25 +516,6 @@ struct ChatView: View {
         .onAppear {
             messageCount = topic.messages.count
             print("ChatView appeared，消息数量: \(messageCount)")
-        }
-    }
-}
-
-struct MessageBubble: View {
-    let message: Message
-    
-    var body: some View {
-        HStack {
-            if !message.isReceived {
-                Spacer()
-            }
-            Text(message.content)
-                .padding(10)
-                .background(message.isReceived ? Color.gray.opacity(0.2) : Color.blue.opacity(0.2))
-                .cornerRadius(10)
-            if message.isReceived {
-                Spacer()
-            }
         }
     }
 }
