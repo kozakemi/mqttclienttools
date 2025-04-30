@@ -33,7 +33,7 @@ struct ContentView: View {
                 }
                 .tag(1)
             
-            ConfigView()
+            ConfigView(mqttViewModel: viewModel)
                 .tabItem {
                     Image(systemName: "gear")
                     Text("配置")

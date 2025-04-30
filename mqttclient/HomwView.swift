@@ -114,9 +114,19 @@ class HomwViewModel: NSObject, ObservableObject {
     }
     
     @Published var isConnected = false
+    @Published var isConnecting = false  // 添加连接中状态标志
     @Published var selectedQoS: QoSLevel = .atLeastOnce
     @Published var selectedFormat: MessageFormat = .text
     private var alertMessage: String = ""
+    @Published var ignoreOwnMessages = true // 是否忽略自己发送的消息
+    // 储存最近发送的消息，用于去重
+    private var recentlySentMessages: [(topic: String, message: String, timestamp: Date)] = []
+    private let recentMessageTimeout: TimeInterval = 2.0 // 2秒内认为是自己发送的消息
+    
+    // 添加消息队列和队列处理锁
+    private var messageQueue: [(String, Topic)] = []
+    private var processingMessages = false
+    private var savingTopics = false
     
     // 警告系统
     enum AlertType: Identifiable {
@@ -163,6 +173,9 @@ class HomwViewModel: NSObject, ObservableObject {
            let format = MessageFormat(rawValue: savedFormat) {
             selectedFormat = format
         }
+        
+        // 加载是否忽略自己发送的消息设置
+        ignoreOwnMessages = defaults.bool(forKey: "ignoreOwnMessages")
     }
     
     private func loadTopics() {
@@ -173,6 +186,19 @@ class HomwViewModel: NSObject, ObservableObject {
     }
     
     func saveTopics() {
+        // 限制每个主题的消息数量，避免过多消息导致性能问题
+        let maxMessagesPerTopic = 500
+        
+        // 在保存前检查是否有主题消息数量超过限制
+        for (index, topic) in topics.enumerated() {
+            if topic.messages.count > maxMessagesPerTopic {
+                // 保留最近的maxMessagesPerTopic条消息
+                print("主题 \(topic.name) 消息数量 \(topic.messages.count) 超过限制，将裁剪为 \(maxMessagesPerTopic) 条")
+                topics[index].messages = Array(topic.messages.suffix(maxMessagesPerTopic))
+            }
+        }
+        
+        // 批量编码和保存，避免频繁操作UserDefaults
         if let encoded = try? JSONEncoder().encode(topics) {
             defaults.set(encoded, forKey: "savedTopics")
         }
@@ -207,6 +233,12 @@ class HomwViewModel: NSObject, ObservableObject {
     }
     
     func connectMQTT() {
+        // 防止重复连接
+        if isConnecting {
+            print("MQTT连接已在进行中，避免重复连接")
+            return
+        }
+        
         guard let ipAddress = defaults.string(forKey: "ipAddress"),
               let port = defaults.value(forKey: "port") as? Int,
               let clientId = defaults.string(forKey: "clientId") else {
@@ -222,57 +254,65 @@ class HomwViewModel: NSObject, ObservableObject {
             return
         }
         
-        transport = MQTTCFSocketTransport()
-        transport?.host = ipAddress
-        transport?.port = UInt32(port)
+        // 设置连接中状态
+        isConnecting = true
         
-        session = MQTTSession()
-        session?.transport = transport
-        session?.clientId = clientId
-        
-        if let username = defaults.string(forKey: "username") {
-            session?.userName = username
-        }
-        if let password = defaults.string(forKey: "password") {
-            session?.password = password
-        }
-        
-        // 设置连接超时检测
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+        // 在后台线程处理连接过程
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            if !self.isConnected {
-                print("MQTT连接超时")
-                self.showAlert("连接超时，请检查配置信息和网络状态")
-                self.isConnected = false
+            
+            self.transport = MQTTCFSocketTransport()
+            self.transport?.host = ipAddress
+            self.transport?.port = UInt32(port)
+            
+            self.session = MQTTSession()
+            self.session?.transport = self.transport
+            self.session?.clientId = clientId
+            
+            if let username = self.defaults.string(forKey: "username") {
+                self.session?.userName = username
             }
-        }
-        
-        print("正在尝试连接MQTT服务器: \(ipAddress):\(port)")
-        session?.connect()
-        session?.delegate = self
-        
-        // 手动尝试订阅所有Topic（作为备份机制）
-        if session?.status == .connected {
-            for topic in topics {
-                let qosLevel = selectedQoS.mqttQoS
-                session?.subscribe(toTopic: topic.name, at: qosLevel, subscribeHandler: { error, gQoss in
-                    if let error = error {
-                        print("订阅Topic失败: \(topic.name), 错误: \(error.localizedDescription)")
-                        self.showAlert("订阅失败: \(error.localizedDescription)")
-                    } else {
-                        print("成功订阅Topic: \(topic.name), QoS: \(gQoss?.first?.intValue ?? -1)")
-                    }
-                })
-                print("已请求订阅Topic: \(topic.name)，使用QoS级别: \(self.selectedQoS.rawValue)")
+            if let password = self.defaults.string(forKey: "password") {
+                self.session?.password = password
+            }
+            
+            // 设置连接超时检测
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+                guard let self = self else { return }
+                if self.isConnecting && !self.isConnected {
+                    print("MQTT连接超时")
+                    self.showAlert("连接超时，请检查配置信息和网络状态")
+                    self.isConnected = false
+                    self.isConnecting = false
+                }
+            }
+            
+            print("正在尝试连接MQTT服务器: \(ipAddress):\(port)")
+            
+            // 设置delegate和连接
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.session?.delegate = self
+                self.session?.connect()
             }
         }
     }
     
     func disconnectMQTT() {
-        session?.disconnect()
-        session = nil
-        transport = nil
         isConnected = false
+        isConnecting = false
+        
+        // 在后台线程处理断开连接，避免阻塞UI
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            self.session?.disconnect()
+            
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                self.session = nil
+                self.transport = nil
+            }
+        }
     }
     
     // 准备要发送的数据
@@ -338,43 +378,128 @@ class HomwViewModel: NSObject, ObservableObject {
     }
     
     func sendMessage(_ content: String, to topic: Topic) {
-        // 准备消息数据
-        guard let data = prepareMessageData(content: content, format: selectedFormat) else {
-            showAlert("无法准备消息数据")
+        // 处理大消息前先确认
+        if content.count > 5000 {
+            print("警告：消息内容过长，可能影响性能")
+        }
+        
+        // 添加到队列
+        addMessageToQueue(content, topic)
+    }
+    
+    // 添加消息队列处理方法
+    private func addMessageToQueue(_ content: String, _ topic: Topic) {
+        // 添加到队列
+        messageQueue.append((content, topic))
+        
+        // 如果不在处理中，则开始处理
+        if !processingMessages {
+            processMessageQueue()
+        }
+    }
+    
+    // 处理消息队列
+    private func processMessageQueue() {
+        // 设置处理标志
+        processingMessages = true
+        
+        // 如果队列为空，则完成处理
+        if messageQueue.isEmpty {
+            processingMessages = false
             return
         }
         
-        // 检查连接状态
-        guard isConnected else {
-            showAlert("MQTT未连接，请先连接MQTT服务器")
-            return
+        // 获取队列中第一个消息
+        let (content, topic) = messageQueue.removeFirst()
+        
+        // 在后台线程处理消息发送
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+            
+            // 准备消息数据
+            guard let data = self.prepareMessageData(content: content, format: self.selectedFormat) else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.showAlert("无法准备消息数据")
+                    // 继续处理队列中的下一个消息
+                    self.processMessageQueue()
+                }
+                return
+            }
+            
+            // 检查连接状态
+            guard self.isConnected else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.showAlert("MQTT未连接，请先连接MQTT服务器")
+                    // 继续处理队列中的下一个消息
+                    self.processMessageQueue()
+                }
+                return
+            }
+            
+            guard let session = self.session else {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    self.showAlert("MQTT会话未创建")
+                    // 继续处理队列中的下一个消息
+                    self.processMessageQueue()
+                }
+                return
+            }
+            
+            // 发布MQTT消息
+            session.publishData(data, 
+                               onTopic: topic.name, 
+                               retain: false, 
+                               qos: self.selectedQoS.mqttQoS)
+            
+            // 在主线程更新UI和状态
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                
+                // 添加到消息列表
+                let newMessage = Message(content: content, 
+                                        isReceived: false, 
+                                        timestamp: Date(), 
+                                        qosLevel: self.selectedQoS.rawValue, 
+                                        format: self.selectedFormat)
+                
+                // 添加消息到topic
+                if let index = self.topics.firstIndex(where: { $0.id == topic.id }) {
+                    self.topics[index].messages.append(newMessage)
+                    
+                    // 如果是当前选中的topic，更新引用
+                    if self.selectedTopic?.id == topic.id {
+                        self.selectedTopic = self.topics[index]
+                    }
+                    
+                    // 记录此消息到最近发送的消息列表，以便可以忽略自己的消息
+                    if self.ignoreOwnMessages {
+                        self.addRecentlySentMessage(topic: topic.name, message: content)
+                    }
+                    
+                    // 保存QoS级别和格式偏好
+                    self.defaults.set(self.selectedQoS.rawValue, forKey: "selectedQoS")
+                    self.defaults.set(self.selectedFormat.rawValue, forKey: "selectedFormat")
+                    
+                    // 延迟保存，避免频繁IO
+                    if !self.savingTopics {
+                        self.savingTopics = true
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                            guard let self = self else { return }
+                            self.saveTopics()
+                            self.savingTopics = false
+                        }
+                    }
+                }
+                
+                print("消息已发送到Topic: \(topic.name), 格式: \(self.selectedFormat.rawValue)")
+                
+                // 继续处理队列中的下一个消息
+                self.processMessageQueue()
+            }
         }
-        
-        guard let session = session else {
-            showAlert("MQTT会话未创建")
-            return
-        }
-        
-        // 发布MQTT消息
-        session.publishData(data, 
-                           onTopic: topic.name, 
-                           retain: false, 
-                           qos: selectedQoS.mqttQoS)
-        
-        // 添加到消息列表
-        let newMessage = Message(content: content, 
-                                isReceived: false, 
-                                timestamp: Date(), 
-                                qosLevel: selectedQoS.rawValue, 
-                                format: selectedFormat)
-        topic.messages.append(newMessage)
-        saveTopics()
-        
-        // 保存QoS级别和格式偏好
-        defaults.set(selectedQoS.rawValue, forKey: "selectedQoS")
-        defaults.set(selectedFormat.rawValue, forKey: "selectedFormat")
-        
-        print("消息已发送到Topic: \(topic.name), 格式: \(selectedFormat.rawValue)")
     }
     
     // 添加删除Topic的方法
@@ -401,6 +526,32 @@ class HomwViewModel: NSObject, ObservableObject {
     // 提供获取当前会话的方法，供外部使用
     func getSession() -> MQTTSession? {
         return session
+    }
+    
+    // 添加最近发送的消息到列表
+    private func addRecentlySentMessage(topic: String, message: String) {
+        let newEntry = (topic: topic, message: message, timestamp: Date())
+        recentlySentMessages.append(newEntry)
+        
+        // 清理超过超时时间的旧消息
+        cleanupOldSentMessages()
+    }
+    
+    // 检查消息是否是最近自己发送的
+    private func isRecentlySentMessage(topic: String, message: String) -> Bool {
+        cleanupOldSentMessages() // 先清理过期消息
+        
+        return recentlySentMessages.contains { entry in
+            return entry.topic == topic && entry.message == message
+        }
+    }
+    
+    // 清理超时的消息记录
+    private func cleanupOldSentMessages() {
+        let now = Date()
+        recentlySentMessages = recentlySentMessages.filter { entry in
+            return now.timeIntervalSince(entry.timestamp) < recentMessageTimeout
+        }
     }
 }
 
@@ -450,6 +601,19 @@ extension HomwViewModel: MQTTSessionDelegate {
         let qosInt = Int(qos.rawValue)
         print("接收消息使用QoS级别: \(qosInt)")
         
+        // 基本检查，避免处理无效数据
+        guard data.count > 0 else {
+            print("收到空数据，忽略")
+            return
+        }
+        
+        // 为大数据消息设置处理限制
+        let maxDataSize = 1024 * 10 // 10KB
+        if data.count > maxDataSize {
+            print("收到大数据消息：\(data.count) 字节，可能需要特殊处理")
+            // 可以在这里添加大数据处理逻辑
+        }
+        
         // 尝试以不同格式解析收到的数据
         var content = ""
         var detectedFormat = MessageFormat.text
@@ -459,10 +623,10 @@ extension HomwViewModel: MQTTSessionDelegate {
         if let textContent = String(data: data, encoding: .utf8) {
             content = textContent
             
-            // 检查是否是自己发送的消息
-            if let lastMessage = topics.first(where: { $0.name == topic })?.messages.last,
-               lastMessage.content == content && !lastMessage.isReceived {
-                return // 如果是自己刚发送的消息，则不重复显示
+            // 如果设置了忽略自己发送的消息，检查是否是自己发送的
+            if ignoreOwnMessages && isRecentlySentMessage(topic: topic, message: content) {
+                print("忽略自己发送的消息: \(content)")
+                return // 忽略自己发送的消息
             }
             
             // 检测是否为JSON格式
@@ -482,11 +646,32 @@ extension HomwViewModel: MQTTSessionDelegate {
             content = data.map { String(format: "%02X", $0) }.joined(separator: " ")
             detectedFormat = .hex
             print("接收到二进制数据，转换为十六进制: \(content)")
+            
+            // 对于二进制数据，也需要检查是否忽略自己发送的消息
+            if ignoreOwnMessages && isRecentlySentMessage(topic: topic, message: content) {
+                print("忽略自己发送的二进制消息")
+                return
+            }
         }
         
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            // 检查主题是否已存在
             if let index = self.topics.firstIndex(where: { $0.name == topic }) {
                 if isValidData {
+                    // 获取当前主题的消息数量
+                    let currentCount = self.topics[index].messages.count
+                    
+                    // 如果消息数量过多，进行优化处理
+                    let maxMessagesInMemory = 500
+                    if currentCount > maxMessagesInMemory {
+                        // 仅保留较新的消息
+                        print("主题 \(topic) 的消息数量过多，进行优化")
+                        let messagesToKeep = Array(self.topics[index].messages.suffix(maxMessagesInMemory - 1))
+                        self.topics[index].messages = messagesToKeep
+                    }
+                    
                     // 使用检测到的格式或默认文本格式
                     let message = Message(content: content, 
                                        isReceived: true, 
@@ -494,14 +679,48 @@ extension HomwViewModel: MQTTSessionDelegate {
                                        qosLevel: qosInt,
                                        format: detectedFormat)
                     
+                    // 添加新消息
                     self.topics[index].messages.append(message)
+                    
+                    // 更新选中的主题，以便刷新UI
                     if self.selectedTopic?.name == topic {
                         self.selectedTopic = self.topics[index]
                     }
-                    self.saveTopics()
+                    
+                    // 延迟保存，减少频繁写入
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                        self?.saveTopics()
+                    }
+                    
                     print("已保存接收到的消息: \(content) (格式: \(detectedFormat.rawValue))")
                 } else {
                     print("接收到无效数据，无法解析")
+                }
+            } else {
+                // 如果主题不存在，创建一个新主题
+                print("发现新主题: \(topic)，自动创建")
+                let newTopic = Topic(name: topic)
+                let message = Message(content: content,
+                                   isReceived: true,
+                                   timestamp: Date(),
+                                   qosLevel: qosInt,
+                                   format: detectedFormat)
+                newTopic.messages.append(message)
+                self.topics.append(newTopic)
+                
+                // 保存新主题
+                self.saveTopics()
+                
+                // 如果启用了自动订阅，对这个新主题进行订阅
+                if self.session?.status == .connected {
+                    let qosLevel = self.selectedQoS.mqttQoS
+                    self.session?.subscribe(toTopic: topic, at: qosLevel, subscribeHandler: { error, gQoss in
+                        if let error = error {
+                            print("自动订阅新主题失败: \(topic), 错误: \(error.localizedDescription)")
+                        } else {
+                            print("自动订阅新主题成功: \(topic)")
+                        }
+                    })
                 }
             }
         }
@@ -511,6 +730,16 @@ extension HomwViewModel: MQTTSessionDelegate {
 struct MessageBubble: View {
     let message: Message
     @State private var showCopyAlert = false
+    @State private var isExpanded = false
+    
+    // 计算要显示的消息内容
+    private var displayContent: String {
+        if message.content.count <= 500 || isExpanded {
+            return message.content
+        } else {
+            return String(message.content.prefix(500)) + "... (点击查看更多)"
+        }
+    }
     
     var body: some View {
         VStack(alignment: message.isReceived ? .leading : .trailing) {
@@ -549,12 +778,19 @@ struct MessageBubble: View {
                     Spacer()
                 }
                 
-                Text(message.content)
+                // 使用LazyText来显示文本
+                Text(displayContent)
                     .padding(10)
                     .background(message.isReceived ? Color.gray.opacity(0.2) : Color.blue.opacity(0.2))
                     .cornerRadius(10)
                     // 添加可选择文本支持
                     .textSelection(.enabled)
+                    // 点击展开长消息
+                    .onTapGesture {
+                        if message.content.count > 500 && !isExpanded {
+                            isExpanded = true
+                        }
+                    }
                     // 添加长按菜单
                     .contextMenu {
                         Button(action: {
@@ -588,6 +824,32 @@ struct ChatView: View {
     @State private var shareText = ""
     @State private var showCopiedAlert = false
     
+    // 添加分页状态
+    @State private var currentPage: Int = 1
+    @State private var messagesPerPage: Int = 30
+    @State private var showLoadMoreButton = false
+    
+    // 添加本地输入状态变量，避免直接使用ViewModel中的状态
+    @State private var localMessageText: String = ""
+    @FocusState private var isInputFocused: Bool
+    
+    // 计算当前要显示的消息
+    private var displayedMessages: [Message] {
+        let totalMessages = topic.messages
+        if totalMessages.count <= messagesPerPage {
+            return totalMessages
+        } else {
+            // 如果消息过多则只显示最新的messagesPerPage条
+            let startIndex = max(0, totalMessages.count - (currentPage * messagesPerPage))
+            return Array(totalMessages.suffix(currentPage * messagesPerPage))
+        }
+    }
+    
+    // 添加隐藏键盘的方法
+    private func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+    
     var body: some View {
         VStack {
             // 顶部工具栏
@@ -620,21 +882,6 @@ struct ChatView: View {
                 
                 Spacer()
                 
-                // // 添加复制所有消息按钮
-                // Button(action: {
-                //     copyAllMessages()
-                // }) {
-                //     HStack {
-                //         Image(systemName: "doc.on.doc")
-                //         Text("复制全部")
-                //     }
-                //     .padding(.horizontal, 8)
-                //     .padding(.vertical, 4)
-                //     .background(Color.blue.opacity(0.2))
-                //     .cornerRadius(8)
-                //     .foregroundColor(.blue)
-                // }
-                
                 Button(action: {
                     print("清空按钮被点击")
                     onClearRequest(topic)  // 使用回调
@@ -653,11 +900,22 @@ struct ChatView: View {
             .padding(.horizontal)
             .padding(.top, 8)
             
-            // 聊天内容
+            // 添加加载更多按钮（在顶部）
+            if showLoadMoreButton && topic.messages.count > messagesPerPage && currentPage * messagesPerPage < topic.messages.count {
+                Button(action: {
+                    currentPage += 1
+                }) {
+                    Text("加载更多历史消息...")
+                        .foregroundColor(.blue)
+                        .padding(.vertical, 8)
+                }
+            }
+            
+            // 聊天内容 - 添加点击事件隐藏键盘
             ScrollViewReader { scrollView in
                 ScrollView {
                     LazyVStack(spacing: 12) {
-                        ForEach(topic.messages) { message in
+                        ForEach(displayedMessages) { message in
                             MessageBubble(message: message)
                                 .id(message.id) // 为每个消息设置ID，用于滚动定位
                         }
@@ -666,6 +924,12 @@ struct ChatView: View {
                     }
                     .padding()
                 }
+                .simultaneousGesture(
+                    TapGesture().onEnded { _ in
+                        // 点击消息区域时，隐藏键盘
+                        hideKeyboard()
+                    }
+                )
                 .onChange(of: topic.messages.count) { _ in
                     // 当消息数量变化时，自动滚动到底部
                     withAnimation {
@@ -681,9 +945,9 @@ struct ChatView: View {
                     }
                 }
                 .onChange(of: scrollToTop) { newValue in
-                    if newValue && !topic.messages.isEmpty {
+                    if newValue && !displayedMessages.isEmpty {
                         withAnimation {
-                            scrollView.scrollTo(topic.messages.first!.id)
+                            scrollView.scrollTo(displayedMessages.first!.id)
                         }
                         scrollToTop = false
                     }
@@ -726,19 +990,42 @@ struct ChatView: View {
             
             // 输入框
             HStack {
-                TextField("输入消息", text: $viewModel.messageText)
+                // 使用本地状态变量
+                TextField("输入消息", text: $localMessageText)
+                    .id("messageInputField_\(topic.id)")
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .padding(.horizontal)
-                
-                Button(action: {
-                    if !viewModel.messageText.isEmpty {
-                        viewModel.sendMessage(viewModel.messageText, to: topic)
-                        if viewModel.isConnected { // 只有在连接状态下才清空输入框
-                            viewModel.messageText = ""
-                            // 发送消息后设置滚动标志
-                            scrollToBottom = true
+                    .focused($isInputFocused)
+                    .submitLabel(.send) // 设置键盘上的回车键为发送
+                    .onSubmit {
+                        sendCurrentMessage()
+                    }
+                    // 禁用自动更正功能
+                    .disableAutocorrection(true)
+                    // 使用onAppear初始化本地文本
+                    .onAppear {
+                        localMessageText = viewModel.messageText
+                    }
+                    // 当本地文本变化时同步到ViewModel
+                    .onChange(of: localMessageText) { newValue in
+                        // 文本过长时裁剪
+                        if newValue.count > 5000 {
+                            localMessageText = String(newValue.prefix(5000))
+                        }
+                        // 延迟同步到ViewModel，避免频繁更新
+                        DispatchQueue.main.async {
+                            viewModel.messageText = localMessageText
                         }
                     }
+                    // 当ViewModel的文本变化时同步到本地
+                    .onChange(of: viewModel.messageText) { newValue in
+                        if newValue != localMessageText {
+                            localMessageText = newValue
+                        }
+                    }
+                
+                Button(action: {
+                    sendCurrentMessage()
                 }) {
                     Image(systemName: "paperplane.fill")
                         .foregroundColor(.blue)
@@ -747,10 +1034,25 @@ struct ChatView: View {
             }
             .padding(.vertical)
         }
-        // 在视图出现时记录当前消息数
         .onAppear {
             messageCount = topic.messages.count
             print("ChatView appeared，消息数量: \(messageCount)")
+            
+            // 如果消息很多，则显示加载更多按钮
+            showLoadMoreButton = topic.messages.count > messagesPerPage
+            
+            // 如果消息太多，可以自动增加每页显示消息数
+            if topic.messages.count > 300 {
+                messagesPerPage = 50
+            } else if topic.messages.count > 500 {
+                messagesPerPage = 70
+            }
+            
+            // 确保至少显示第一页
+            currentPage = 1
+            
+            // 初始化本地文本
+            localMessageText = viewModel.messageText
         }
         // 添加复制成功的提示
         .alert("已复制全部消息到剪贴板", isPresented: $showCopiedAlert) {
@@ -758,20 +1060,31 @@ struct ChatView: View {
         }
     }
     
-    // 复制所有消息的方法
-    private func copyAllMessages() {
-        if topic.messages.isEmpty {
-            return
+    // 抽取发送消息逻辑到单独的方法
+    private func sendCurrentMessage() {
+        if !localMessageText.isEmpty {
+            let textToSend = localMessageText
+            
+            // 先清空输入框
+            localMessageText = ""
+            viewModel.messageText = ""
+            
+            // 取消键盘焦点
+            isInputFocused = false
+            
+            // 使用延迟发送，避免UI卡顿
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                if viewModel.isConnected {
+                    // 发送消息
+                    viewModel.sendMessage(textToSend, to: topic)
+                    // 设置滚动到底部
+                    scrollToBottom = true
+                } else {
+                    // 如果未连接，显示提示
+                    viewModel.showAlert("MQTT未连接，请先连接MQTT服务器")
+                }
+            }
         }
-        
-        var allMessages = ""
-        for message in topic.messages {
-            let prefix = message.isReceived ? "收到: " : "发送: "
-            allMessages += "\(prefix)\(message.content)\n"
-        }
-        
-        UIPasteboard.general.string = allMessages
-        showCopiedAlert = true
     }
 }
 

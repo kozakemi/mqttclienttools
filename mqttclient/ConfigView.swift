@@ -18,6 +18,8 @@ struct ConfigView: View {
     @State private var alertMessage = ""
     @State private var showPassword = false
     @State private var showAboutMe = false
+    @State private var ignoreOwnMessages = false
+    @ObservedObject var mqttViewModel: HomwViewModel // 直接使用传递的ViewModel
     @Environment(\.horizontalSizeClass) var horizontalSizeClass
     
     // 添加环境变量来访问UIApplication
@@ -69,37 +71,64 @@ struct ConfigView: View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 20) {
-                    ForEach(["MQTT服务器地址", "MQTT服务器端口", "用户名", "密码", "客户端ID"], id: \.self) { title in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(title)
-                                .font(.headline)
-                                .foregroundColor(.primary)
-                            
-                            if title == "密码" {
-                                HStack {
-                                    if showPassword {
-                                        TextField("Password", text: $password)
-                                    } else {
-                                        SecureField("Password", text: $password)
+                    // 服务器连接设置区域
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("服务器连接")
+                            .font(.headline)
+                            .padding(.bottom, 5)
+                        
+                        ForEach(["MQTT服务器地址", "MQTT服务器端口", "用户名", "密码", "客户端ID"], id: \.self) { title in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(title)
+                                    .font(.subheadline)
+                                    .foregroundColor(.primary)
+                                
+                                if title == "密码" {
+                                    HStack {
+                                        if showPassword {
+                                            TextField("Password", text: $password)
+                                        } else {
+                                            SecureField("Password", text: $password)
+                                        }
+                                        
+                                        Button(action: {
+                                            showPassword.toggle()
+                                        }) {
+                                            Image(systemName: showPassword ? "eye.slash" : "eye")
+                                                .foregroundColor(.gray)
+                                        }
                                     }
-                                    
-                                    Button(action: {
-                                        showPassword.toggle()
-                                    }) {
-                                        Image(systemName: showPassword ? "eye.slash" : "eye")
-                                            .foregroundColor(.gray)
-                                    }
+                                } else {
+                                    TextField(title == "MQTT服务器地址" ? "IP Address/Header" :
+                                             title == "MQTT服务器端口" ? "Port" :
+                                             title == "用户名" ? "Username" : "Client ID",
+                                             text: title == "MQTT服务器地址" ? $ipAddress :
+                                             title == "MQTT服务器端口" ? $port :
+                                             title == "用户名" ? $username : $clientId)
+                                    .keyboardType(title == "MQTT服务器端口" ? .numberPad : .default)
                                 }
-                            } else {
-                                TextField(title == "MQTT服务器地址" ? "IP Address/Header" :
-                                         title == "MQTT服务器端口" ? "Port" :
-                                         title == "用户名" ? "Username" : "Client ID",
-                                         text: title == "MQTT服务器地址" ? $ipAddress :
-                                         title == "MQTT服务器端口" ? $port :
-                                         title == "用户名" ? $username : $clientId)
-                                .keyboardType(title == "MQTT服务器端口" ? .numberPad : .default)
                             }
+                            .padding()
+                            .background(Color.secondary.opacity(0.1))
+                            .cornerRadius(10)
                         }
+                    }
+                    
+                    // 消息显示选项区域
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("消息显示选项")
+                            .font(.headline)
+                            .padding(.bottom, 5)
+                        
+                        Toggle("忽略自己发送的消息回显", isOn: Binding(
+                            get: { mqttViewModel.ignoreOwnMessages },
+                            set: { newValue in
+                                DispatchQueue.main.async {
+                                    mqttViewModel.ignoreOwnMessages = newValue
+                                    defaults.set(newValue, forKey: "ignoreOwnMessages")
+                                }
+                            }
+                        ))
                         .padding()
                         .background(Color.secondary.opacity(0.1))
                         .cornerRadius(10)
@@ -114,6 +143,7 @@ struct ConfigView: View {
                                 self.defaults.set(self.username, forKey: "username")
                                 self.defaults.set(self.password, forKey: "password")
                                 self.defaults.set(self.clientId, forKey: "clientId")  // 保存客户端ID
+                                self.defaults.set(mqttViewModel.ignoreOwnMessages, forKey: "ignoreOwnMessages")  // 保存消息显示选项
                                 
                                 alertMessage = "配置保存成功"
                                 showAlert = true
@@ -158,6 +188,16 @@ struct ConfigView: View {
                     } else {
                         self.clientId = generateRandomClientId()
                     }
+                    
+                    // 在视图出现时从UserDefaults同步设置到ViewModel
+                    let savedIgnoreMessages = defaults.bool(forKey: "ignoreOwnMessages")
+                    // 仅当值不同时才更新，避免不必要的状态变化
+                    if mqttViewModel.ignoreOwnMessages != savedIgnoreMessages {
+                        // 使用异步更新避免阻塞UI
+                        DispatchQueue.main.async {
+                            mqttViewModel.ignoreOwnMessages = savedIgnoreMessages
+                        }
+                    }
                 }
             }
             .navigationBarTitle("MQTT配置", displayMode: .inline)
@@ -184,5 +224,5 @@ struct ConfigView: View {
 }
 
 #Preview {
-    ConfigView()
+    ConfigView(mqttViewModel: HomwViewModel())
 }
