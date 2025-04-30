@@ -3,42 +3,44 @@ import SwiftUI
 struct TopicView: View {
     @ObservedObject var viewModel: HomwViewModel
     @Binding var selectedTab: Int
+    @Environment(\.horizontalSizeClass) var horizontalSizeClass
     
     var body: some View {
         NavigationView {
             VStack {
                 // Topic列表
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(viewModel.topics) { topic in
+                List {
+                    ForEach(viewModel.topics) { topic in
+                        Button(action: {
+                            viewModel.selectedTopic = topic
+                            selectedTab = 1  // 切换到主页
+                        }) {
                             HStack {
-                                Button(action: {
-                                    viewModel.selectedTopic = topic
-                                    selectedTab = 1  // 切换到主页
-                                }) {
-                                    Text(topic.name)
-                                        .font(.system(size: 18, weight: .medium))
-                                        .foregroundColor(.primary)
-                                        .padding(.vertical, 10)
-                                        .padding(.horizontal)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .background(viewModel.selectedTopic?.id == topic.id ? Color.blue.opacity(0.2) : Color.gray.opacity(0.1))
-                                        .cornerRadius(8)
-                                }
+                                Text(topic.name)
+                                    .font(.system(size: 18, weight: .medium))
+                                    .foregroundColor(.primary)
+                                    .padding(.vertical, 10)
                                 
-                                Button(action: {
-                                    viewModel.alertType = .deleteTopic(topic: topic)
-                                }) {
-                                    Image(systemName: "trash")
-                                        .foregroundColor(.red)
-                                        .padding(.trailing, 8)
-                                }
+                                Spacer()
                             }
-                            .padding(.horizontal, 8)
+                        }
+                        .listRowBackground(viewModel.selectedTopic?.id == topic.id ? Color.blue.opacity(0.2) : Color.clear)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                viewModel.alertType = .deleteTopic(topic: topic)
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
                         }
                     }
-                    .padding(.vertical, 8)
+                    .onDelete { indexSet in
+                        // 处理删除操作
+                        guard let index = indexSet.first else { return }
+                        let topicToDelete = viewModel.topics[index]
+                        viewModel.alertType = .deleteTopic(topic: topicToDelete)
+                    }
                 }
+                .listStyle(InsetGroupedListStyle())
                 
                 // 添加Topic的输入框
                 HStack {
@@ -62,7 +64,14 @@ struct TopicView: View {
                 .padding(.vertical)
             }
             .navigationBarTitle("Topics", displayMode: .inline)
+            
+            // 确保iPad上有默认内容（这个视图在iPad分屏模式下会显示）
+            Text("请选择一个Topic")
+                .font(.title)
+                .foregroundColor(.gray)
         }
+        // 使用StackNavigationViewStyle确保在所有设备上使用单一视图
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 }
 

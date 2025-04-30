@@ -626,6 +626,7 @@ struct SidebarView: View {
 
 struct HomwView: View {
     @ObservedObject var viewModel: HomwViewModel
+    @Environment(\.horizontalSizeClass) var horizontalSizeClass
     
     var body: some View {
         NavigationView {
@@ -661,38 +662,14 @@ struct HomwView: View {
                     }
                 }
             )
+            
+            // 确保iPad上有默认内容（这个视图在iPad分屏模式下会显示）
+            Text("请在主页查看内容")
+                .font(.title)
+                .foregroundColor(.gray)
         }
-        // 使用单一的alert和alertType进行处理
-        .alert(item: $viewModel.alertType) { alertType in
-            switch alertType {
-            case .connection(let message):
-                return Alert(
-                    title: Text("提示"),
-                    message: Text(message),
-                    dismissButton: .default(Text("确定"))
-                )
-            case .clearConfirm(let topic):
-                return Alert(
-                    title: Text("确认清空"),
-                    message: Text("确定要清空所有聊天记录吗？"),
-                    primaryButton: .destructive(Text("确定")) {
-                        topic.messages.removeAll()
-                        viewModel.saveTopics()
-                        viewModel.objectWillChange.send()
-                    },
-                    secondaryButton: .cancel(Text("取消"))
-                )
-            case .deleteTopic(let topic):
-                return Alert(
-                    title: Text("确认删除"),
-                    message: Text("确定要删除Topic \"\(topic.name)\" 吗？所有消息记录将被永久删除。"),
-                    primaryButton: .destructive(Text("删除")) {
-                        viewModel.deleteTopic(topic)
-                    },
-                    secondaryButton: .cancel(Text("取消"))
-                )
-            }
-        }
+        // 使用StackNavigationViewStyle确保在所有设备上使用单一视图
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 }
 

@@ -18,6 +18,7 @@ struct ConfigView: View {
     @State private var alertMessage = ""
     @State private var showPassword = false
     @State private var showAboutMe = false
+    @Environment(\.horizontalSizeClass) var horizontalSizeClass
     
     // 添加环境变量来访问UIApplication
     @Environment(\.scenePhase) private var scenePhase
@@ -120,7 +121,7 @@ struct ConfigView: View {
                                 showAlert = true
                             }
                         }) {
-                            Text("Save")
+                            Text("保存")
                                 .padding()
                                 .frame(maxWidth: .infinity)
                                 .foregroundColor(.white)
@@ -171,7 +172,14 @@ struct ConfigView: View {
             .onTapGesture {
                 dismissKeyboard()
             }
+            
+            // 确保iPad上有默认内容（这个视图在iPad分屏模式下会显示）
+            Text("在配置页面设置MQTT参数")
+                .font(.title)
+                .foregroundColor(.gray)
         }
+        // 使用StackNavigationViewStyle确保在所有设备上使用单一视图
+        .navigationViewStyle(StackNavigationViewStyle())
     }
 }
 
