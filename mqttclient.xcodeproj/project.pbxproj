@@ -8,7 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		38D119E68230A0E8B1124F69 /* libPods-mqttclientUITests.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 127C9D4344666D6F60253BB3 /* libPods-mqttclientUITests.a */; };
-		444DD93E2B8C943F003354EC /* HomwView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444DD93D2B8C943F003354EC /* HomwView.swift */; };
+		44080F532DF5C9EF00242DDC /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44080F522DF5C9EF00242DDC /* HomeView.swift */; };
 		444DD9402B8C9474003354EC /* ConfigView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444DD93F2B8C9474003354EC /* ConfigView.swift */; };
 		444DD9442B8C94C7003354EC /* AboutMeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 444DD9432B8C94C7003354EC /* AboutMeView.swift */; };
 		44999CA72DC28C1B00EC64E5 /* TopicView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44999CA62DC28C1B00EC64E5 /* TopicView.swift */; };
@@ -42,7 +42,7 @@
 /* Begin PBXFileReference section */
 		0DB0272D0023F2995507A897 /* Pods_mqttclient.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_mqttclient.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		127C9D4344666D6F60253BB3 /* libPods-mqttclientUITests.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-mqttclientUITests.a"; sourceTree = BUILT_PRODUCTS_DIR; };
-		444DD93D2B8C943F003354EC /* HomwView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomwView.swift; sourceTree = "<group>"; };
+		44080F522DF5C9EF00242DDC /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		444DD93F2B8C9474003354EC /* ConfigView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigView.swift; sourceTree = "<group>"; };
 		444DD9432B8C94C7003354EC /* AboutMeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutMeView.swift; sourceTree = "<group>"; };
 		44999CA62DC28C1B00EC64E5 /* TopicView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopicView.swift; sourceTree = "<group>"; };
@@ -117,9 +117,9 @@
 				44F334792B8AF09F00729E87 /* mqttclientApp.swift */,
 				44999CA62DC28C1B00EC64E5 /* TopicView.swift */,
 				44F3347B2B8AF09F00729E87 /* ContentView.swift */,
+				44080F522DF5C9EF00242DDC /* HomeView.swift */,
 				444DD9432B8C94C7003354EC /* AboutMeView.swift */,
 				444DD93F2B8C9474003354EC /* ConfigView.swift */,
-				444DD93D2B8C943F003354EC /* HomwView.swift */,
 				44F3347F2B8AF0A200729E87 /* Assets.xcassets */,
 				44F334812B8AF0A200729E87 /* Preview Content */,
 			);
@@ -375,9 +375,9 @@
 				444DD9402B8C9474003354EC /* ConfigView.swift in Sources */,
 				44F3347C2B8AF09F00729E87 /* ContentView.swift in Sources */,
 				44999CA72DC28C1B00EC64E5 /* TopicView.swift in Sources */,
+				44080F532DF5C9EF00242DDC /* HomeView.swift in Sources */,
 				44F3347A2B8AF09F00729E87 /* mqttclientApp.swift in Sources */,
 				444DD9442B8C94C7003354EC /* AboutMeView.swift in Sources */,
-				444DD93E2B8C943F003354EC /* HomwView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

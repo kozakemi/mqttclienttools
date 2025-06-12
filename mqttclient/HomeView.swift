@@ -8,22 +8,25 @@ struct Message: Identifiable, Codable {
     let timestamp: Date
     let qosLevel: Int // 0, 1, 或 2
     let format: String
+    let isError: Bool // 添加错误标记
     
-    init(content: String, isReceived: Bool, timestamp: Date, qosLevel: Int = 1, format: String) {
+    init(content: String, isReceived: Bool, timestamp: Date, qosLevel: Int = 1, format: String, isError: Bool = false) {
         self.content = content
         self.isReceived = isReceived
         self.timestamp = timestamp
         self.qosLevel = qosLevel
         self.format = format
+        self.isError = isError
     }
     
     // 添加一个便捷的初始化方法，接受MessageFormat枚举
-    init(content: String, isReceived: Bool, timestamp: Date, qosLevel: Int = 1, format: MessageFormat) {
+    init(content: String, isReceived: Bool, timestamp: Date, qosLevel: Int = 1, format: MessageFormat, isError: Bool = false) {
         self.content = content
         self.isReceived = isReceived
         self.timestamp = timestamp
         self.qosLevel = qosLevel
         self.format = format.rawValue
+        self.isError = isError
     }
 }
 
@@ -66,7 +69,7 @@ enum MessageFormat: String, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
-class HomwViewModel: NSObject, ObservableObject {
+class HomeViewModel: NSObject, ObservableObject {
     // QoS级别枚举
     enum QoSLevel: Int, CaseIterable, Identifiable {
         case atMostOnce = 0
@@ -448,11 +451,15 @@ class HomwViewModel: NSObject, ObservableObject {
                 return
             }
             
+            // 获取当前选择的QoS级别
+            let qosLevel = self.selectedQoS.mqttQoS
+            print("发送消息使用QoS级别: \(qosLevel.rawValue)")
+            
             // 发布MQTT消息
             session.publishData(data, 
                                onTopic: topic.name, 
                                retain: false, 
-                               qos: self.selectedQoS.mqttQoS)
+                               qos: qosLevel)
             
             // 在主线程更新UI和状态
             DispatchQueue.main.async { [weak self] in
@@ -463,7 +470,8 @@ class HomwViewModel: NSObject, ObservableObject {
                                         isReceived: false, 
                                         timestamp: Date(), 
                                         qosLevel: self.selectedQoS.rawValue, 
-                                        format: self.selectedFormat)
+                                        format: self.selectedFormat,
+                                        isError: false)
                 
                 // 添加消息到topic
                 if let index = self.topics.firstIndex(where: { $0.id == topic.id }) {
@@ -494,7 +502,7 @@ class HomwViewModel: NSObject, ObservableObject {
                     }
                 }
                 
-                print("消息已发送到Topic: \(topic.name), 格式: \(self.selectedFormat.rawValue)")
+                print("消息已发送到Topic: \(topic.name), 格式: \(self.selectedFormat.rawValue), QoS: \(qosLevel.rawValue)")
                 
                 // 继续处理队列中的下一个消息
                 self.processMessageQueue()
@@ -555,7 +563,7 @@ class HomwViewModel: NSObject, ObservableObject {
     }
 }
 
-extension HomwViewModel: MQTTSessionDelegate {
+extension HomeViewModel: MQTTSessionDelegate {
     func handleEvent(_ session: MQTTSession!, event: MQTTSessionEvent, error: Error!) {
         print("MQTT事件: \(event.rawValue), 错误: \(error?.localizedDescription ?? "无")")
         
@@ -566,16 +574,22 @@ extension HomwViewModel: MQTTSessionDelegate {
                 print("MQTT连接成功")
                 // 连接成功后订阅所有Topic
                 for topic in self.topics {
+                    // 获取当前选择的QoS级别
                     let qosLevel = self.selectedQoS.mqttQoS
+                    print("订阅Topic: \(topic.name) 使用QoS级别: \(qosLevel.rawValue)")
+                    
                     session.subscribe(toTopic: topic.name, at: qosLevel, subscribeHandler: { error, gQoss in
                         if let error = error {
                             print("订阅Topic失败: \(topic.name), 错误: \(error.localizedDescription)")
                             self.showAlert("订阅失败: \(error.localizedDescription)")
                         } else {
-                            print("成功订阅Topic: \(topic.name), QoS: \(gQoss?.first?.intValue ?? -1)")
+                            if let grantedQos = gQoss?.first?.intValue {
+                                print("成功订阅Topic: \(topic.name), 服务器授予的QoS: \(grantedQos)")
+                            } else {
+                                print("成功订阅Topic: \(topic.name), 但未收到服务器授予的QoS级别")
+                            }
                         }
                     })
-                    print("已请求订阅Topic: \(topic.name)，使用QoS级别: \(self.selectedQoS.rawValue)")
                 }
             case .connectionClosed:
                 self.isConnected = false
@@ -618,8 +632,9 @@ extension HomwViewModel: MQTTSessionDelegate {
         var content = ""
         var detectedFormat = MessageFormat.text
         var isValidData = true
+        var isError = false
         
-        // 首先尝试作为UTF-8文本解析
+        // 首先尝试使用当前选择的发送格式进行解析
         if let textContent = String(data: data, encoding: .utf8) {
             content = textContent
             
@@ -629,23 +644,32 @@ extension HomwViewModel: MQTTSessionDelegate {
                 return // 忽略自己发送的消息
             }
             
-            // 检测是否为JSON格式
-            if content.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") &&
-               content.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("}") {
+            // 根据当前选择的发送格式尝试解析
+            switch selectedFormat {
+            case .json:
                 if let _ = try? JSONSerialization.jsonObject(with: data, options: []) {
                     detectedFormat = .json
+                } else {
+                    isError = true
                 }
-            }
-            // 检测是否为十六进制格式
-            else if content.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "0x", with: "")
-                .allSatisfy({ $0.isHexDigit }) {
-                detectedFormat = .hex
+            case .hex:
+                if content.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "0x", with: "")
+                    .allSatisfy({ $0.isHexDigit }) {
+                    detectedFormat = .hex
+                } else {
+                    isError = true
+                }
+            case .text:
+                detectedFormat = .text
             }
         } else {
             // 如果不是文本，则尝试将其作为二进制数据，并转换为十六进制字符串
             content = data.map { String(format: "%02X", $0) }.joined(separator: " ")
-            detectedFormat = .hex
-            print("接收到二进制数据，转换为十六进制: \(content)")
+            if selectedFormat == .hex {
+                detectedFormat = .hex
+            } else {
+                isError = true
+            }
             
             // 对于二进制数据，也需要检查是否忽略自己发送的消息
             if ignoreOwnMessages && isRecentlySentMessage(topic: topic, message: content) {
@@ -677,7 +701,8 @@ extension HomwViewModel: MQTTSessionDelegate {
                                        isReceived: true, 
                                        timestamp: Date(), 
                                        qosLevel: qosInt,
-                                       format: detectedFormat)
+                                       format: detectedFormat,
+                                       isError: isError)
                     
                     // 添加新消息
                     self.topics[index].messages.append(message)
@@ -692,7 +717,7 @@ extension HomwViewModel: MQTTSessionDelegate {
                         self?.saveTopics()
                     }
                     
-                    print("已保存接收到的消息: \(content) (格式: \(detectedFormat.rawValue))")
+                    print("已保存接收到的消息: \(content) (格式: \(detectedFormat.rawValue), 错误: \(isError))")
                 } else {
                     print("接收到无效数据，无法解析")
                 }
@@ -704,7 +729,8 @@ extension HomwViewModel: MQTTSessionDelegate {
                                    isReceived: true,
                                    timestamp: Date(),
                                    qosLevel: qosInt,
-                                   format: detectedFormat)
+                                   format: detectedFormat,
+                                   isError: isError)
                 newTopic.messages.append(message)
                 self.topics.append(newTopic)
                 
@@ -781,7 +807,11 @@ struct MessageBubble: View {
                 // 使用LazyText来显示文本
                 Text(displayContent)
                     .padding(10)
-                    .background(message.isReceived ? Color.gray.opacity(0.2) : Color.blue.opacity(0.2))
+                    .background(
+                        message.isReceived 
+                            ? (message.isError ? Color.red.opacity(0.2) : Color.gray.opacity(0.2))
+                            : Color("mqttPurple").opacity(0.2)
+                    )
                     .cornerRadius(10)
                     // 添加可选择文本支持
                     .textSelection(.enabled)
@@ -814,7 +844,7 @@ struct MessageBubble: View {
 }
 
 struct ChatView: View {
-    @ObservedObject var viewModel: HomwViewModel
+    @ObservedObject var viewModel: HomeViewModel
     let topic: Topic
     let onClearRequest: (Topic) -> Void
     @State private var scrollToBottom = false
@@ -906,7 +936,7 @@ struct ChatView: View {
                     currentPage += 1
                 }) {
                     Text("加载更多历史消息...")
-                        .foregroundColor(.blue)
+                        .foregroundColor(Color("mqttPurple"))
                         .padding(.vertical, 8)
                 }
             }
@@ -954,6 +984,21 @@ struct ChatView: View {
                 }
                 // 添加一个对messageCount变化的监听，强制刷新视图
                 .id(messageCount)
+                // 添加键盘显示和隐藏的监听
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        withAnimation {
+                            scrollView.scrollTo("bottom")
+                        }
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        withAnimation {
+                            scrollView.scrollTo("bottom")
+                        }
+                    }
+                }
             }
             
             // 底部控制区域
@@ -978,7 +1023,7 @@ struct ChatView: View {
                         .font(.system(size: 14))
                     
                     Picker("QoS级别", selection: $viewModel.selectedQoS) {
-                        ForEach(HomwViewModel.QoSLevel.allCases) { qos in
+                        ForEach(HomeViewModel.QoSLevel.allCases) { qos in
                             Text(qos.description).tag(qos)
                         }
                     }
@@ -1028,7 +1073,7 @@ struct ChatView: View {
                     sendCurrentMessage()
                 }) {
                     Image(systemName: "paperplane.fill")
-                        .foregroundColor(.blue)
+                        .foregroundColor(Color("mqttPurple"))
                 }
                 .padding(.trailing)
             }
@@ -1089,7 +1134,7 @@ struct ChatView: View {
 }
 
 struct SidebarView: View {
-    @ObservedObject var viewModel: HomwViewModel
+    @ObservedObject var viewModel: HomeViewModel
     
     var body: some View {
         VStack {
@@ -1107,7 +1152,7 @@ struct SidebarView: View {
                                     .padding(.vertical, 10)
                                     .padding(.horizontal)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(viewModel.selectedTopic?.id == topic.id ? Color.blue.opacity(0.2) : Color.gray.opacity(0.1))
+                                    .background(viewModel.selectedTopic?.id == topic.id ? Color("mqttPurple").opacity(0.2) : Color.gray.opacity(0.1))
                                     .cornerRadius(8)
                             }
                             
@@ -1140,7 +1185,7 @@ struct SidebarView: View {
                     }
                 }) {
                     Image(systemName: "plus.circle.fill")
-                        .foregroundColor(.blue)
+                        .foregroundColor(Color("mqttPurple"))
                 }
                 .padding(.trailing)
             }
@@ -1156,7 +1201,7 @@ struct SidebarView: View {
                 }
                 .padding()
                 .frame(maxWidth: .infinity)
-                .background(Color.blue.opacity(0.1))
+                .background(Color("mqttPurple").opacity(0.1))
                 .cornerRadius(10)
             }
             .padding()
@@ -1167,7 +1212,7 @@ struct SidebarView: View {
 }
 
 struct HomwView: View {
-    @ObservedObject var viewModel: HomwViewModel
+    @ObservedObject var viewModel: HomeViewModel
     @Environment(\.horizontalSizeClass) var horizontalSizeClass
     
     var body: some View {
@@ -1193,15 +1238,16 @@ struct HomwView: View {
             }
             .navigationBarTitle(viewModel.selectedTopic?.name ?? "主页", displayMode: .inline)
             .navigationBarItems(
-                trailing: Toggle(isOn: $viewModel.isConnected) {
-                    Text("连接")
-                }
-                .onChange(of: viewModel.isConnected) { newValue in
-                    if newValue {
-                        viewModel.connectMQTT()
-                    } else {
+                trailing: Button(action: {
+                    if viewModel.isConnected {
                         viewModel.disconnectMQTT()
+                    } else {
+                        viewModel.connectMQTT()
                     }
+                    viewModel.isConnected.toggle()
+                }) {
+                    Image(systemName: viewModel.isConnected ? "link" : "link.badge.plus")
+                        .foregroundColor(viewModel.isConnected ? Color("mqttPurple") : .blue)
                 }
             )
             
@@ -1216,6 +1262,6 @@ struct HomwView: View {
 }
 
 #Preview {
-    HomwView(viewModel: HomwViewModel())
+    HomwView(viewModel: HomeViewModel())
 }
 

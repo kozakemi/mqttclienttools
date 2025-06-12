@@ -22,7 +22,7 @@ jobs:
           echo $default | cat >default
           echo Using default scheme: $default
       
-      - name: 构建未签名IPA
+      - name: 构建应用
         env:
           scheme: ${{ 'default' }}
         run: |
@@ -37,33 +37,22 @@ jobs:
           file_to_build=`echo $file_to_build | awk '{$1=$1;print}'`
           
           # 创建构建目录
-          mkdir -p build
+          mkdir -p build/Payload
           
-          # 构建应用程序
-          xcodebuild -scheme "$scheme" -"$filetype_parameter" "$file_to_build" -configuration Release -archivePath ./build/app.xcarchive archive
+          # 直接构建应用程序到指定路径，跳过签名
+          xcodebuild -scheme "$scheme" -"$filetype_parameter" "$file_to_build" -configuration Release CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" EXPANDED_CODE_SIGN_IDENTITY="" -sdk iphoneos -derivedDataPath ./build
           
-          # 创建导出选项
-          cat << EOF > ./build/options.plist
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>development</string>
-              <key>compileBitcode</key>
-              <false/>
-              <key>signingStyle</key>
-              <string>manual</string>
-          </dict>
-          </plist>
-          EOF
+          # 查找并复制.app文件到Payload目录
+          find ./build -name "*.app" -type d -exec cp -R {} ./build/Payload/ \;
           
-          # 导出未签名IPA
-          xcodebuild -exportArchive -archivePath ./build/app.xcarchive -exportPath ./build/output -exportOptionsPlist ./build/options.plist
+          # 创建IPA文件
+          cd ./build
+          zip -r app-unsigned.ipa Payload
+          cd ..
       
       - name: 上传IPA构建产物
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: app-unsigned
-          path: ./build/output
-          # retention-days: 5
+          path: ./build/app-unsigned.ipa
+          retention-days: 5

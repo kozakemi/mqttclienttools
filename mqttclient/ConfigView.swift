@@ -19,7 +19,7 @@ struct ConfigView: View {
     @State private var showPassword = false
     @State private var showAboutMe = false
     @State private var ignoreOwnMessages = false
-    @ObservedObject var mqttViewModel: HomwViewModel // 直接使用传递的ViewModel
+    @ObservedObject var mqttViewModel: HomeViewModel // 直接使用传递的ViewModel
     @Environment(\.horizontalSizeClass) var horizontalSizeClass
     
     // 添加环境变量来访问UIApplication
@@ -155,7 +155,7 @@ struct ConfigView: View {
                                 .padding()
                                 .frame(maxWidth: .infinity)
                                 .foregroundColor(.white)
-                                .background(Color.blue)
+                                .background(Color("mqttPurple"))
                                 .cornerRadius(10)
                         }
                         
@@ -168,7 +168,7 @@ struct ConfigView: View {
                             }
                             .padding()
                             .frame(maxWidth: .infinity)
-                            .background(Color.blue.opacity(0.1))
+                            .background(Color("mqttPurple").opacity(0.1))
                             .cornerRadius(10)
                         }
                     }
@@ -224,5 +224,5 @@ struct ConfigView: View {
 }
 
 #Preview {
-    ConfigView(mqttViewModel: HomwViewModel())
+    ConfigView(mqttViewModel: HomeViewModel())
 }

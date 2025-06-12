@@ -2,52 +2,58 @@ import SwiftUI
 import MQTTClient
 
 struct ContentView: View {
-    @StateObject private var viewModel = HomwViewModel()
+    @StateObject private var viewModel = HomeViewModel()
     @State private var selectedTab = 1  // 默认选择主页标签
-    
-    init() {
-        // 设置TabBar的背景色
-        UITabBar.appearance().backgroundColor = UIColor.secondarySystemBackground
-        // 设置导航栏的背景色
-        let navBarAppearance = UINavigationBarAppearance()
-        navBarAppearance.configureWithOpaqueBackground()
-        navBarAppearance.backgroundColor = UIColor.secondarySystemBackground
-        UINavigationBar.appearance().standardAppearance = navBarAppearance
-        UINavigationBar.appearance().compactAppearance = navBarAppearance
-        UINavigationBar.appearance().scrollEdgeAppearance = navBarAppearance
-    }
-    
+//    
+//    init() {
+//        // 设置TabBar的背景色
+//        UITabBar.appearance().backgroundColor = UIColor.secondarySystemBackground
+//        // 设置导航栏的背景色
+//        let navBarAppearance = UINavigationBarAppearance()
+//        navBarAppearance.configureWithOpaqueBackground()
+//        navBarAppearance.backgroundColor = UIColor.secondarySystemBackground
+//        UINavigationBar.appearance().standardAppearance = navBarAppearance
+//        UINavigationBar.appearance().compactAppearance = navBarAppearance
+//        UINavigationBar.appearance().scrollEdgeAppearance = navBarAppearance
+//    }
+//    
     var body: some View {
         TabView(selection: $selectedTab) {
             TopicView(viewModel: viewModel, selectedTab: $selectedTab)
                 .tabItem {
                     Image(systemName: "list.bullet")
                     Text("Topics")
+                    
                 }
                 .tag(0)
             
             HomwView(viewModel: viewModel)
                 .tabItem {
                     Image(systemName: "house")
+                        
                     Text("主页")
+                        
                 }
                 .tag(1)
             
             ConfigView(mqttViewModel: viewModel)
                 .tabItem {
                     Image(systemName: "gear")
+                        
                     Text("配置")
+                        
                 }
                 .tag(2)
         }
+        .accentColor(Color("mqttPurple")) // 设置整
         // 使用兼容的方法修复横屏布局问题
-        .onAppear {
-            // 监听设备旋转通知
-            NotificationCenter.default.addObserver(forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main) { _ in
-                // 简单地强制更新视图，避免使用iOS 16特定API
-                // 这个空操作会触发SwiftUI重新评估视图布局
-            }
-        }
+//        .onAppear {
+//            // 监听设备旋转通知
+//            NotificationCenter.default.addObserver(forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main) { _ in
+//                // 简单地强制更新视图，避免使用iOS 16特定API
+//                // 这个空操作会触发SwiftUI重新评估视图布局
+//            }
+//        }
         // 添加alert处理
         .alert(item: $viewModel.alertType) { alertType in
             switch alertType {
